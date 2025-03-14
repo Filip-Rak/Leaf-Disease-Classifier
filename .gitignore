@@ -1,0 +1,20 @@
+# Ignore PyCharm settings
+.idea/
+
+# Ignore compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore virtual environments
+venv/
+.env/
+*.venv
+
+# Ignore logs and system files
+logs/
+*.log
+.DS_Store
