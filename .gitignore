@@ -18,3 +18,8 @@ venv/
 logs/
 *.log
 .DS_Store
+
+# Ignore models and images
+*.pth
+*.png
+*.jpg
