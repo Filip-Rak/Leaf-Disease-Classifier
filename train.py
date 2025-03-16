@@ -17,7 +17,7 @@ CONFIG = {
     "DATA_DIR": "dataset/",             # Root folder for datasets.
     "TRAIN_DIR": "dataset/train/",      # Training images grouped into subfolders (each for a class).
     "VAL_DIR": "dataset/val/",          # Validation directory for measuring model performance.
-    "MODELS_DIR": "models/",            # Directory for saved models.
+    "OUTPUT_DIR": "output/",            # Directory for saved models.
     "IMAGE_SIZE": (224, 224),           # Fixed image size.
     "NUM_CLASSES": 7,                   # The number of categories the model classifies.
     "BATCH_SIZE": 64,                   # Number of images processed in one forward and backward pass.
@@ -35,10 +35,10 @@ def init_device(gpu_id: int):
         device = torch.device(f"cuda:{gpu_id}")
         torch.cuda.set_device(gpu_id)
         torch.backends.cudnn.benchmark = True  # Allow PyTorch picking the fastest convolution algorithm on GPU
-        print(f"Using device: {device} ({torch.cuda.get_device_name(gpu_id)})")
+        log_print(f"Using device: {device} ({torch.cuda.get_device_name(gpu_id)})")
     else:
         device = torch.device("cpu")
-        print("CUDA not available, using CPU.")
+        log_print("CUDA not available, using CPU.")
     return device
 
 # ------------------------------
@@ -111,16 +111,16 @@ def train_model(model, train_loader, device, optimizer, criterion, num_epochs):
 
             # Print progress every 10 batches
             if batch_idx % 10 == 0:
-                print(f"Epoch {epoch + 1}, Batch {batch_idx}, Loss: {loss.item():.4f}")
+                log_print(f"Epoch {epoch + 1}, Batch {batch_idx}, Loss: {loss.item():.4f}")
 
         # Debug average loss and training time
         epoch_time = time.time() - start_time
         avg_loss = running_loss / len(train_loader)
-        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}, Time: {epoch_time:.2f}s")
+        log_print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}, Time: {epoch_time:.2f}s")
 
 # ------------------------------
 # Validation Function
-def validate_model(model, val_loader, device, criterion, display_conf_matrix: bool):
+def validate_model(model, val_loader, device, criterion):
     """Evaluate the model on the validation dataset."""
     # Set model to validation mode
     model.eval()
@@ -160,77 +160,93 @@ def validate_model(model, val_loader, device, criterion, display_conf_matrix: bo
     # Debug accuracy and loss
     accuracy = correct / total * 100
     avg_loss = val_loss / len(val_loader)
-    print(f"Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%")
+    log_print(f"Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%")
 
-    # Generate confusion matrix if requested
-    if display_conf_matrix:
-        cm = confusion_matrix(all_labels, all_predictions)
-        class_names = val_loader.dataset.classes
-        plt.figure(figsize=(10, 8))
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=class_names, yticklabels=class_names)
-        plt.xlabel("Predicted Label")
-        plt.ylabel("True Label")
-        plt.title("Confusion Matrix")
-
-        # Adjust layout to prevent labels from being cut off
-        plt.xticks(rotation=45, ha="right")
-        plt.yticks(rotation=0)
-        plt.tight_layout()
-
-        plt.savefig("confusion_matrix.png")
-        print("Confusion matrix saved as confusion_matrix.png")
-        plt.close()
-
-    return accuracy, avg_loss
+    # Generate confusion matrix
+    cm = confusion_matrix(all_labels, all_predictions)
+    return cm
 
 # ------------------------------
-# Model Saving Function
-def save_model(model, save_dir, save_path):
-    """Save the trained model to disk."""
-    os.makedirs(save_dir, exist_ok=True)            # Create save dir if it doesn't exist
-    torch.save(model.state_dict(), save_path)       # Save the model
-    print(f"Model saved to {save_path}")
+# Data Saving Function
+def save_output(model, cm, save_path):
+    """Save the trained model, confusion matrix, and logs to the same directory."""
+    os.makedirs(save_path, exist_ok=True)
+
+    # Save model
+    model_path = os.path.join(save_path, f"model-{os.path.basename(save_path)}.pth")
+    torch.save(model.state_dict(), model_path)
+    log_print(f"Model saved to {model_path}")
+
+    # Save confusion matrix
+    cm_path = os.path.join(save_path, f"cm-{os.path.basename(save_path)}.png")
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
+    plt.xlabel("Predicted Label")
+    plt.ylabel("True Label")
+    plt.title("Confusion Matrix")
+    plt.savefig(cm_path)
+    log_print(f"Confusion matrix saved to {cm_path}")
+    plt.close()
+
+    # Save logs
+    log_path = os.path.join(save_path, f"log-{os.path.basename(save_path)}.txt")
+    with open(log_path, "w") as log_file:
+        log_file.write(LOG_OUTPUT)
+    log_print(f"Logs saved to {log_path}")
 
 # ------------------------------
 # User query
-def get_model_filename(save_dir: str):
-    """Ask the user for a model filename and handle overwrite checks."""
+def get_output_dir_name(save_dir: str):
+    """Ask the user for a directory name and handle overwrite checks."""
     os.makedirs(save_dir, exist_ok=True)
 
     while True:
-        model_name = input("Enter the model filename (without extension): ").strip()
+        dir_name = log_input("Enter output directory name: ").strip()
 
-        if model_name == "":
-            model_name = "model"
+        if dir_name == "":
+            dir_name = "unnamed"
 
-        save_path = os.path.join(save_dir, model_name + ".pth")
+        save_path = os.path.join(save_dir, dir_name)
 
         if os.path.exists(save_path):
-            overwrite = input(f"Model '{model_name}.pth' already exists. Overwrite? (Y/N): ").strip().lower()
+            overwrite = log_input(f"'{dir_name}' already exists. Overwrite? (Y/N): ").strip().lower()
             if overwrite == 'y':
-                print("Overwriting existing model...")
+                log_print("Overwriting existing output...")
                 return save_path  # Save with the chosen name
             else:
-                print("Enter a different model name.")
+                log_print("Enter a different name.")
         else:
             return save_path  # Save with the new name
 
-def ask_for_confusion_matrix():
-    """Ask the user if they want to display a confusion matrix."""
-    response = input("Display confusion matrix after validation? (Y/N): ").strip().lower()
-    return response == 'y'
+
+# Global variable to store logs
+LOG_OUTPUT = ""
+
+def log_print(*args, **kwargs):
+    """Custom print function to store logs while also displaying them."""
+    global LOG_OUTPUT
+    message = " ".join(map(str, args))  # Convert all print args to a single string
+    LOG_OUTPUT += message + "\n"  # Append to global log string
+    print(message, **kwargs)  # Still print normally to console
+
+def log_input(prompt):
+    """Custom input function that logs user input along with the prompt."""
+    global LOG_OUTPUT
+    user_response = input(prompt)  # Get user input
+    log_entry = f"{prompt}{user_response}"  # Combine prompt + input
+    LOG_OUTPUT += log_entry + "\n"  # Log input
+    return user_response  # Return input as normal
 
 # ------------------------------
 # Main Function
 def main():
     """Main training loop."""
     # Query user on the process
-    print("/* Querying */")
-    model_save_path = get_model_filename(CONFIG["MODELS_DIR"])
-    display_conf_matrix = ask_for_confusion_matrix()
+    log_print("/* Querying */")
+    save_path = get_output_dir_name(CONFIG["OUTPUT_DIR"])
 
     # Set properties used in training
-    print("/* Initializing */")
+    log_print("/* Initializing */")
     device = init_device(CONFIG["GPU_ID"])
     train_loader, val_loader = get_data_loaders(CONFIG["TRAIN_DIR"], CONFIG["VAL_DIR"], CONFIG["BATCH_SIZE"], CONFIG["IMAGE_SIZE"], CONFIG["NUM_WORKERS"])
 
@@ -239,16 +255,16 @@ def main():
     criterion = nn.CrossEntropyLoss()
 
     # Train the model
-    print("/* Training */")
+    log_print("/* Training */")
     train_model(model, train_loader, device, optimizer, criterion, CONFIG["NUM_EPOCHS"])
 
     # Validate the model
-    print("/* Validation */")
-    validate_model(model, val_loader, device, criterion, display_conf_matrix)
+    log_print("/* Validation */")
+    cm = validate_model(model, val_loader, device, criterion)
 
     # Save the model
-    print("/* Saving */")
-    save_model(model, CONFIG["MODELS_DIR"], model_save_path)
+    log_print("/* Saving */")
+    save_output(model, cm, save_path)
 
 
 # ------------------------------
