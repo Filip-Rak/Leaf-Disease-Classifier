@@ -12,7 +12,7 @@ from torchvision import transforms, datasets
 import seaborn as sns
 
 # ------------------------------
-# Configuration
+# Attributes
 CONFIG = {
     "DATA_DIR": "dataset/",             # Root folder for datasets.
     "TRAIN_DIR": "dataset/train/",      # Training images grouped into subfolders (each for a class).
@@ -21,14 +21,34 @@ CONFIG = {
     "IMAGE_SIZE": (224, 224),           # Fixed image size.
     "NUM_CLASSES": 7,                   # The number of categories the model classifies.
     "BATCH_SIZE": 64,                   # Number of images processed in one forward and backward pass.
-    "NUM_EPOCHS": 1,                   # How many times the full dataset will pass through during training.
+    "NUM_EPOCHS": 10,                   # How many times the full dataset will pass through during training.
     "LEARNING_RATE": 0.001,             # Step size for model updates.
     "GPU_ID": 0,                        # Specifies which CUDA GPU to use.
     "NUM_WORKERS": 8,                   # Number of CPU threads used for data loading.
 }
 
+# Global variable to store logs
+LOG_OUTPUT = ""
+
 # ------------------------------
-# Device Initialization
+# Functions
+class DiseaseClassifier(nn.Module):
+    """EfficientNet-based classifier for plant disease classification."""
+
+    def __init__(self, num_classes):
+        super(DiseaseClassifier, self).__init__()
+        self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
+
+        # Modify classifier to add Dropout before final layer
+        self.model.classifier = nn.Sequential(
+            nn.Dropout(0.3),  # 30% Dropout
+            nn.Linear(self.model.classifier[1].in_features, num_classes)
+        )
+
+    # Define the prediction flow
+    def forward(self, x):
+        return self.model(x)
+
 def init_device(gpu_id: int):
     """Initialize and return the device (GPU or CPU)."""
     if torch.cuda.is_available():
@@ -41,17 +61,15 @@ def init_device(gpu_id: int):
         log_print("CUDA not available, using CPU.")
     return device
 
-# ------------------------------
-# Data Preparation
 def get_data_loaders(train_dir, val_dir, batch_size, image_size, num_workers):
     """Prepare and return the training and validation data loaders."""
     train_transform = transforms.Compose([
         transforms.Resize(image_size),
         transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(45),
-        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-        transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),
-        transforms.GaussianBlur(kernel_size=3),
+        transforms.RandomRotation(15),
+        # transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+        # transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),
+        # transforms.GaussianBlur(kernel_size=3),
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))  # Normalize between [-1, 1]
     ])
@@ -71,27 +89,6 @@ def get_data_loaders(train_dir, val_dir, batch_size, image_size, num_workers):
 
     return train_loader, val_loader
 
-# ------------------------------
-# Model Definition
-class DiseaseClassifier(nn.Module):
-    """EfficientNet-based classifier for plant disease classification."""
-
-    def __init__(self, num_classes):
-        super(DiseaseClassifier, self).__init__()
-        self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
-
-        # Modify classifier to add Dropout before final layer
-        self.model.classifier = nn.Sequential(
-            nn.Dropout(0.3),  # 30% Dropout
-            nn.Linear(self.model.classifier[1].in_features, num_classes)
-        )
-
-    # Define the prediction flow
-    def forward(self, x):
-        return self.model(x)
-
-# ------------------------------
-# Training Function
 def train_model(model, train_loader, device, optimizer, criterion, num_epochs, scheduler=None):
     """Train the model and print progress."""
     # Switch the model into training mode
@@ -136,8 +133,6 @@ def train_model(model, train_loader, device, optimizer, criterion, num_epochs, s
     # Print total time spent in training
     log_print(f"Total time spent in training: {total_time:.2f}s")
 
-# ------------------------------
-# Validation Function
 def validate_model(model, val_loader, device, criterion):
     """Evaluate the model on the validation dataset."""
     # Set model to validation mode
@@ -184,8 +179,6 @@ def validate_model(model, val_loader, device, criterion):
     cm = confusion_matrix(all_labels, all_predictions)
     return cm
 
-# ------------------------------
-# Data Saving Function
 def save_output(model, cm, save_path, val_loader):
     """Save the trained model, confusion matrix, and logs to the same directory."""
     os.makedirs(save_path, exist_ok=True)
@@ -219,8 +212,6 @@ def save_output(model, cm, save_path, val_loader):
         log_file.write(LOG_OUTPUT)
     log_print(f"Logs saved to {log_path}")
 
-# ------------------------------
-# User query
 def get_output_dir_name(save_dir: str):
     """Ask the user for a directory name and handle overwrite checks."""
     os.makedirs(save_dir, exist_ok=True)
@@ -243,24 +234,20 @@ def get_output_dir_name(save_dir: str):
         else:
             return save_path  # Save with the new name
 
-
-# Global variable to store logs
-LOG_OUTPUT = ""
-
 def log_print(*args, **kwargs):
     """Custom print function to store logs while also displaying them."""
     global LOG_OUTPUT
     message = " ".join(map(str, args))  # Convert all print args to a single string
-    LOG_OUTPUT += message + "\n"  # Append to global log string
-    print(message, **kwargs)  # Still print normally to console
+    LOG_OUTPUT += message + "\n"        # Append to global log string
+    print(message, **kwargs)            # Still print normally to console
 
 def log_input(prompt):
     """Custom input function that logs user input along with the prompt."""
     global LOG_OUTPUT
-    user_response = input(prompt)  # Get user input
+    user_response = input(prompt)           # Get user input
     log_entry = f"{prompt}{user_response}"  # Combine prompt + input
-    LOG_OUTPUT += log_entry + "\n"  # Log input
-    return user_response  # Return input as normal
+    LOG_OUTPUT += log_entry + "\n"          # Log input
+    return user_response                    # Return input as normal
 
 # ------------------------------
 # Main Function
@@ -274,10 +261,9 @@ def main():
     log_print("/* Initializing */")
     device = init_device(CONFIG["GPU_ID"])
     train_loader, val_loader = get_data_loaders(CONFIG["TRAIN_DIR"], CONFIG["VAL_DIR"], CONFIG["BATCH_SIZE"], CONFIG["IMAGE_SIZE"], CONFIG["NUM_WORKERS"])
-
     model = DiseaseClassifier(CONFIG["NUM_CLASSES"]).to(device)
     optimizer = optim.Adam(model.parameters(), lr=CONFIG["LEARNING_RATE"])
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss()
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
 
     # Train the model
@@ -291,7 +277,6 @@ def main():
     # Save the model
     log_print("/* Saving */")
     save_output(model, cm, save_path, val_loader)
-
 
 # ------------------------------
 # Entry Point
