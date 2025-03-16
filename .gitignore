@@ -19,6 +19,3 @@ logs/
 *.log
 .DS_Store
 
-# Ignore outputs
-output/
-output/*
