@@ -21,7 +21,7 @@ CONFIG = {
     "IMAGE_SIZE": (224, 224),           # Fixed image size.
     "NUM_CLASSES": 7,                   # The number of categories the model classifies.
     "BATCH_SIZE": 64,                   # Number of images processed in one forward and backward pass.
-    "NUM_EPOCHS": 1,                    # How many times the full dataset will pass through during training.
+    "NUM_EPOCHS": 1,                   # How many times the full dataset will pass through during training.
     "LEARNING_RATE": 0.001,             # Step size for model updates.
     "GPU_ID": 0,                        # Specifies which CUDA GPU to use.
     "NUM_WORKERS": 8,                   # Number of CPU threads used for data loading.
@@ -66,8 +66,7 @@ def get_data_loaders(train_dir, val_dir, batch_size, image_size, num_workers):
     val_dataset = datasets.ImageFolder(root=val_dir, transform=val_transform)
 
     # pin_memory = Moves data to pinned (non-pageable) memory, making CPU to GPU transfers faster
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers,
-                              pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
 
     return train_loader, val_loader
@@ -80,7 +79,12 @@ class DiseaseClassifier(nn.Module):
     def __init__(self, num_classes):
         super(DiseaseClassifier, self).__init__()
         self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
-        self.model.classifier[1] = nn.Linear(self.model.classifier[1].in_features, num_classes)
+
+        # Modify classifier to add Dropout before final layer
+        self.model.classifier = nn.Sequential(
+            nn.Dropout(0.3),  # 30% Dropout
+            nn.Linear(self.model.classifier[1].in_features, num_classes)
+        )
 
     # Define the prediction flow
     def forward(self, x):
@@ -88,10 +92,13 @@ class DiseaseClassifier(nn.Module):
 
 # ------------------------------
 # Training Function
-def train_model(model, train_loader, device, optimizer, criterion, num_epochs):
+def train_model(model, train_loader, device, optimizer, criterion, num_epochs, scheduler=None):
     """Train the model and print progress."""
     # Switch the model into training mode
     model.train()
+
+    # Sum total time
+    total_time = 0
 
     # Go through entire dataset num_epochs times
     for epoch in range(num_epochs):
@@ -118,8 +125,16 @@ def train_model(model, train_loader, device, optimizer, criterion, num_epochs):
 
         # Debug average loss and training time
         epoch_time = time.time() - start_time
+        total_time += epoch_time
         avg_loss = running_loss / len(train_loader)
         log_print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}, Time: {epoch_time:.2f}s")
+
+        # Step the scheduler
+        if scheduler:
+            scheduler.step(avg_loss)
+
+    # Print total time spent in training
+    log_print(f"Total time spent in training: {total_time:.2f}s")
 
 # ------------------------------
 # Validation Function
@@ -171,7 +186,7 @@ def validate_model(model, val_loader, device, criterion):
 
 # ------------------------------
 # Data Saving Function
-def save_output(model, cm, save_path):
+def save_output(model, cm, save_path, val_loader):
     """Save the trained model, confusion matrix, and logs to the same directory."""
     os.makedirs(save_path, exist_ok=True)
 
@@ -183,10 +198,17 @@ def save_output(model, cm, save_path):
     # Save confusion matrix
     cm_path = os.path.join(save_path, f"cm-{os.path.basename(save_path)}.png")
     plt.figure(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
+    class_names = val_loader.dataset.classes
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=class_names, yticklabels=class_names)
     plt.xlabel("Predicted Label")
     plt.ylabel("True Label")
     plt.title("Confusion Matrix")
+
+    # Adjust layout to prevent labels from being cut off
+    plt.xticks(rotation=45, ha="right")
+    plt.yticks(rotation=0)
+    plt.tight_layout()
+
     plt.savefig(cm_path)
     log_print(f"Confusion matrix saved to {cm_path}")
     plt.close()
@@ -256,10 +278,11 @@ def main():
     model = DiseaseClassifier(CONFIG["NUM_CLASSES"]).to(device)
     optimizer = optim.Adam(model.parameters(), lr=CONFIG["LEARNING_RATE"])
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
 
     # Train the model
     log_print("/* Training */")
-    train_model(model, train_loader, device, optimizer, criterion, CONFIG["NUM_EPOCHS"])
+    train_model(model, train_loader, device, optimizer, criterion, CONFIG["NUM_EPOCHS"], scheduler)
 
     # Validate the model
     log_print("/* Validation */")
@@ -267,7 +290,7 @@ def main():
 
     # Save the model
     log_print("/* Saving */")
-    save_output(model, cm, save_path)
+    save_output(model, cm, save_path, val_loader)
 
 
 # ------------------------------
