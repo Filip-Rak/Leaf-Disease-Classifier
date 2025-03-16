@@ -48,7 +48,10 @@ def get_data_loaders(train_dir, val_dir, batch_size, image_size, num_workers):
     train_transform = transforms.Compose([
         transforms.Resize(image_size),
         transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(15),
+        transforms.RandomRotation(45),
+        transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+        transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),
+        transforms.GaussianBlur(kernel_size=3),
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))  # Normalize between [-1, 1]
     ])
@@ -252,7 +255,7 @@ def main():
 
     model = DiseaseClassifier(CONFIG["NUM_CLASSES"]).to(device)
     optimizer = optim.Adam(model.parameters(), lr=CONFIG["LEARNING_RATE"])
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
     # Train the model
     log_print("/* Training */")

@@ -21,3 +21,4 @@ logs/
 
 # Ignore outputs
 output/
+output/*
