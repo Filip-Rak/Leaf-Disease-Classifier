@@ -1,5 +1,7 @@
+import copy
 import os
 import time
+import sys
 
 import torch
 import torch.nn as nn
@@ -21,7 +23,7 @@ CONFIG = {
     "IMAGE_SIZE": (224, 224),           # Fixed image size.
     "NUM_CLASSES": 7,                   # The number of categories the model classifies.
     "BATCH_SIZE": 64,                   # Number of images processed in one forward and backward pass.
-    "NUM_EPOCHS": 10,                   # How many times the full dataset will pass through during training.
+    "NUM_EPOCHS": 30,                   # How many times the full dataset will pass through during training.
     "LEARNING_RATE": 0.001,             # Step size for model updates.
     "GPU_ID": 0,                        # Specifies which CUDA GPU to use.
     "NUM_WORKERS": 8,                   # Number of CPU threads used for data loading.
@@ -89,18 +91,19 @@ def get_data_loaders(train_dir, val_dir, batch_size, image_size, num_workers):
 
     return train_loader, val_loader
 
-def train_model(model, train_loader, device, optimizer, criterion, num_epochs, scheduler=None):
+def train_model(model, train_loader, device, optimizer, criterion, num_epochs, allowed_loss_increases: int, scheduler=None):
     """Train the model and print progress."""
     # Switch the model into training mode
     model.train()
 
-    # Sum total time
-    total_time = 0
+    total_time = 0.0  # Sum total time
+    lowest_loss = sys.float_info.max
+    loss_increases_in_a_row = 0
+    best_model_state = copy.deepcopy(model.state_dict())  # Store the initial model state
 
     # Go through entire dataset num_epochs times
     for epoch in range(num_epochs):
-        # Start the timer and keep track of total loss
-        start_time = time.time()
+        start_time = time.time()    # Start the timer and keep track of total loss
         running_loss = 0.0
 
         # Go through every training batch
@@ -120,18 +123,42 @@ def train_model(model, train_loader, device, optimizer, criterion, num_epochs, s
             if batch_idx % 10 == 0:
                 log_print(f"Epoch {epoch + 1}, Batch {batch_idx}, Loss: {loss.item():.4f}")
 
-        # Debug average loss and training time
-        epoch_time = time.time() - start_time
-        total_time += epoch_time
-        avg_loss = running_loss / len(train_loader)
-        log_print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}, Time: {epoch_time:.2f}s")
-
         # Step the scheduler
+        avg_loss = running_loss / len(train_loader)
         if scheduler:
             scheduler.step(avg_loss)
 
+        # If validation loss is worse, count it
+        if avg_loss > lowest_loss:
+            loss_increases_in_a_row += 1
+            log_print(f"NOTICE: Validation loss increased in this epoch ({loss_increases_in_a_row}/{allowed_loss_increases + 1}).")
+
+            # If the loss increased too many times, revert the model
+            if loss_increases_in_a_row > allowed_loss_increases:
+                # Debug average loss and training time
+                epoch_time = time.time() - start_time
+                total_time += epoch_time
+                log_print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}, Time: {epoch_time:.2f}s")
+
+                # End training
+                log_print(f"NOTICE: Reverting to previous best model state (loss: {lowest_loss:.4f}). Ending training")
+                model.load_state_dict(best_model_state)  # Restore best model
+                break
+        else:
+            lowest_loss = avg_loss
+            loss_increases_in_a_row = 0  # Reset counter if loss improves
+            best_model_state = copy.deepcopy(model.state_dict())  # Save the best model
+
+        # Debug average loss and training time
+        epoch_time = time.time() - start_time
+        total_time += epoch_time
+        log_print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}, Time: {epoch_time:.2f}s")
+
     # Print total time spent in training
     log_print(f"Total time spent in training: {total_time:.2f}s")
+
+    # Return the best model
+    return model
 
 def validate_model(model, val_loader, device, criterion):
     """Evaluate the model on the validation dataset."""
@@ -263,12 +290,13 @@ def main():
     train_loader, val_loader = get_data_loaders(CONFIG["TRAIN_DIR"], CONFIG["VAL_DIR"], CONFIG["BATCH_SIZE"], CONFIG["IMAGE_SIZE"], CONFIG["NUM_WORKERS"])
     model = DiseaseClassifier(CONFIG["NUM_CLASSES"]).to(device)
     optimizer = optim.Adam(model.parameters(), lr=CONFIG["LEARNING_RATE"])
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
+    allowed_loss_increases = 3
 
     # Train the model
     log_print("/* Training */")
-    train_model(model, train_loader, device, optimizer, criterion, CONFIG["NUM_EPOCHS"], scheduler)
+    model = train_model(model, train_loader, device, optimizer, criterion, CONFIG["NUM_EPOCHS"], allowed_loss_increases, scheduler)
 
     # Validate the model
     log_print("/* Validation */")
