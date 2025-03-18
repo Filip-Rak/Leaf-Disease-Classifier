@@ -22,11 +22,11 @@ CONFIG = {
     "OUTPUT_DIR": "output/",            # Directory for saved models.
     "IMAGE_SIZE": (224, 224),           # Fixed image size.
     "NUM_CLASSES": 7,                   # The number of categories the model classifies.
-    "BATCH_SIZE": 64,                   # Number of images processed in one forward and backward pass.
-    "NUM_EPOCHS": 30,                   # How many times the full dataset will pass through during training.
-    "LEARNING_RATE": 0.001,             # Step size for model updates.
+    "BATCH_SIZE": 16,                   # Number of images processed in one forward and backward pass.
+    "NUM_EPOCHS": 50,                   # How many times the full dataset will pass through during training.
+    "LEARNING_RATE": 0.00025,           # Step size for model updates.
     "GPU_ID": 0,                        # Specifies which CUDA GPU to use.
-    "NUM_WORKERS": 8,                   # Number of CPU threads used for data loading.
+    "NUM_WORKERS": 1,                   # Number of CPU threads used for data loading.
 }
 
 # Global variable to store logs
@@ -100,6 +100,7 @@ def train_model(model, train_loader, device, optimizer, criterion, num_epochs, a
     lowest_loss = sys.float_info.max
     loss_increases_in_a_row = 0
     best_model_state = copy.deepcopy(model.state_dict())  # Store the initial model state
+    scaler = torch.amp.GradScaler('cuda')    # Automatic Mixed Precision Scaler
 
     # Go through entire dataset num_epochs times
     for epoch in range(num_epochs):
@@ -111,20 +112,25 @@ def train_model(model, train_loader, device, optimizer, criterion, num_epochs, a
             # Move data onto GPU if enabled
             inputs, labels = inputs.to(device), labels.to(device)
 
-            optimizer.zero_grad()               # Zero gradient from previous batch
-            outputs = model(inputs)             # Run a prediction
-            loss = criterion(outputs, labels)   # Compute loss
-            loss.backward()                     # Compute the gradient of the loss
-            optimizer.step()                    # Update model weights
+            optimizer.zero_grad()                   # Zero gradient from previous batch
 
-            running_loss += loss.item()         # Add up entire loss of this epoch
+            with torch.amp.autocast('cuda'):         # Enable mixed precision
+                outputs = model(inputs)             # Run a prediction
+                loss = criterion(outputs, labels)   # Compute loss
+
+            scaler.scale(loss).backward()           # Scaled backpropagation
+            scaler.step(optimizer)                  # Step optimizer
+            scaler.update()                         # Update scaling factor
+
+            running_loss += loss.item()             # Add up entire loss of this epoch
 
             # Print progress every 10 batches
-            if batch_idx % 10 == 0:
+            if batch_idx % 40 == 0:
                 log_print(f"Epoch {epoch + 1}, Batch {batch_idx}, Loss: {loss.item():.4f}")
 
-        # Step the scheduler
         avg_loss = running_loss / len(train_loader)
+
+        # Update the scheduler
         if scheduler:
             scheduler.step(avg_loss)
 
@@ -292,7 +298,7 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=CONFIG["LEARNING_RATE"])
     criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
-    allowed_loss_increases = 3
+    allowed_loss_increases = CONFIG["NUM_EPOCHS"]
 
     # Train the model
     log_print("/* Training */")
