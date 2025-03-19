@@ -13,6 +13,8 @@ from torch.utils.data import DataLoader
 from torchvision import transforms, datasets
 import seaborn as sns
 
+from efficient_net import CustomEfficientNetB0
+
 # ------------------------------
 # Attributes
 CONFIG = {
@@ -23,7 +25,7 @@ CONFIG = {
     "IMAGE_SIZE": (224, 224),           # Fixed image size.
     "NUM_CLASSES": 7,                   # The number of categories the model classifies.
     "BATCH_SIZE": 16,                   # Number of images processed in one forward and backward pass.
-    "NUM_EPOCHS": 50,                   # How many times the full dataset will pass through during training.
+    "NUM_EPOCHS": 150,                  # How many times the full dataset will pass through during training.
     "LEARNING_RATE": 0.00025,           # Step size for model updates.
     "GPU_ID": 0,                        # Specifies which CUDA GPU to use.
     "NUM_WORKERS": 1,                   # Number of CPU threads used for data loading.
@@ -39,7 +41,8 @@ class DiseaseClassifier(nn.Module):
 
     def __init__(self, num_classes):
         super(DiseaseClassifier, self).__init__()
-        self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
+        # self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
+        self.model = CustomEfficientNetB0()
 
         # Modify classifier to add Dropout before final layer
         self.model.classifier = nn.Sequential(
@@ -68,7 +71,7 @@ def get_data_loaders(train_dir, val_dir, batch_size, image_size, num_workers):
     train_transform = transforms.Compose([
         transforms.Resize(image_size),
         transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(15),
+        transforms.RandomRotation(45),
         # transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
         # transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),
         # transforms.GaussianBlur(kernel_size=3),
@@ -114,7 +117,7 @@ def train_model(model, train_loader, device, optimizer, criterion, num_epochs, a
 
             optimizer.zero_grad()                   # Zero gradient from previous batch
 
-            with torch.amp.autocast('cuda'):         # Enable mixed precision
+            with torch.amp.autocast('cuda'):        # Enable mixed precision
                 outputs = model(inputs)             # Run a prediction
                 loss = criterion(outputs, labels)   # Compute loss
 
