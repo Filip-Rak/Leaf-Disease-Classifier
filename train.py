@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import kornia.augmentation as K
+import torchvision.models as models
 from matplotlib import pyplot as plt
 from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader
@@ -17,16 +18,21 @@ from efficient_net import CustomEfficientNetB0
 # Attributes
 # ------------------------------
 CONFIG = {
-    "DATA_DIR": "dataset/",             # Root folder for datasets.
+    "DATA_DIR": "dataset/",             # Root directory for datasets.
     "TRAIN_DIR": "dataset/train/",      # Training images grouped into subfolders (each for a class).
     "VAL_DIR": "dataset/val/",          # Validation directory for measuring model performance.
     "TEST_DIR": "dataset/test/",        # Directory with images for the final model test.
-    "OUTPUT_DIR": "output/",            # Directory for saved models.
+    "OUTPUT_DIR": "output/V2/",         # Directory for saved models.
     "IMAGE_SIZE": (224, 224),           # Fixed image size.
     "NUM_CLASSES": 7,                   # The number of categories the model classifies.
     "BATCH_SIZE": 16,                   # Number of images processed in one forward and backward pass.
-    "NUM_EPOCHS": 30,                   # How many times the full dataset will pass through during training.
+    "NUM_EPOCHS": 90,                   # How many times the full dataset will pass through during training.
     "LEARNING_RATE": 0.00025,           # Step size for model updates.
+    "LABEL_SMOOTHING": 0.05,            # Prevents overconfidence by slightly adjusting target labels.
+    "SCHEDULER_MODE": "min",            # Tack 'min' (validation loss decreasing) or 'max' (accuracy increasing).
+    "SCHEDULER_FACTOR": 0.5,            # Factor by which the learning rate is reduced when the scheduler is triggered.
+    "SCHEDULER_PATIENCE": 2,            # Number of epochs with no improvement before the learning rate is reduced.
+    "DROPOUT_FACTOR": 0.3,              # The percentage of neurons randomly disabled during training to prevent overfitting.
     "GPU_ID": 0,                        # Specifies which CUDA GPU to use.
     "NUM_WORKERS": 1,                   # Number of CPU threads used for data loading.
 }
@@ -39,12 +45,12 @@ class DiseaseClassifier(nn.Module):
 
     def __init__(self, num_classes):
         super(DiseaseClassifier, self).__init__()
-        # self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
-        self.model = CustomEfficientNetB0()
+        self.model = models.efficientnet_b0(weights=models.EfficientNet_B0_Weights.DEFAULT)
+        # self.model = CustomEfficientNetB0()
 
         # Modify classifier to add Dropout before final layer
         self.model.classifier = nn.Sequential(
-            nn.Dropout(0.3),  # 30% Dropout
+            nn.Dropout(CONFIG["DROPOUT_FACTOR"]),
             nn.Linear(self.model.classifier[1].in_features, num_classes)
         )
 
@@ -54,14 +60,17 @@ class DiseaseClassifier(nn.Module):
 
 gpu_augmentations = torch.nn.Sequential(
     K.RandomHorizontalFlip(),
-    K.RandomRotation(45.0),
+    K.RandomVerticalFlip(),
+    K.RandomRotation(15.0),
     # K.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
     # K.RandomAffine(degrees=0, translate=(0.2, 0.2)),
-    # K.RandomGaussianBlur((3, 3), (0.1, 2.0))
+    # K.RandomGaussianBlur((3, 3), (0.1, 2.0)),
+    # K.RandomMotionBlur(kernel_size=(3, 5), angle=10.0, direction=0.1),
 ).cuda()
 
 # Functions
 # ------------------------------
+
 # Initialization
 def init_device(gpu_id: int):
     """Initialize and return the device (GPU or CPU)."""
@@ -151,7 +160,7 @@ def main_training_loop(model, train_loader, val_loader, device, optimizer, crite
     """Train and validate the model while printing progress"""
     total_training_time = 0.0
     loss_increases_in_a_row = 0
-    lowest_val_loss = 10e5
+    lowest_val_loss = float("inf")
     best_model_state = copy.deepcopy(model.state_dict)
     scaler = torch.amp.GradScaler('cuda')
 
@@ -335,8 +344,8 @@ def main():
     train_loader, val_loader, test_loader = get_data_loaders(CONFIG["TRAIN_DIR"], CONFIG["VAL_DIR"], CONFIG["TEST_DIR"], CONFIG["BATCH_SIZE"], CONFIG["IMAGE_SIZE"], CONFIG["NUM_WORKERS"])
     model = DiseaseClassifier(CONFIG["NUM_CLASSES"]).to(device)
     optimizer = optim.Adam(model.parameters(), lr=CONFIG["LEARNING_RATE"])
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=2)
+    criterion = nn.CrossEntropyLoss(label_smoothing=CONFIG["LABEL_SMOOTHING"])
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode=CONFIG["SCHEDULER_MODE"], factor=CONFIG["SCHEDULER_FACTOR"], patience=CONFIG["SCHEDULER_PATIENCE"])
     allowed_loss_increases = CONFIG["NUM_EPOCHS"]
 
     # Train the model
