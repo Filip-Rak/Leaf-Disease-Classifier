@@ -20,11 +20,12 @@ CONFIG = {
     "DATA_DIR": "dataset/",             # Root folder for datasets.
     "TRAIN_DIR": "dataset/train/",      # Training images grouped into subfolders (each for a class).
     "VAL_DIR": "dataset/val/",          # Validation directory for measuring model performance.
+    "TEST_DIR": "dataset/test/",        # Directory with images for the final model test.
     "OUTPUT_DIR": "output/",            # Directory for saved models.
     "IMAGE_SIZE": (224, 224),           # Fixed image size.
     "NUM_CLASSES": 7,                   # The number of categories the model classifies.
     "BATCH_SIZE": 16,                   # Number of images processed in one forward and backward pass.
-    "NUM_EPOCHS": 150,                  # How many times the full dataset will pass through during training.
+    "NUM_EPOCHS": 30,                   # How many times the full dataset will pass through during training.
     "LEARNING_RATE": 0.00025,           # Step size for model updates.
     "GPU_ID": 0,                        # Specifies which CUDA GPU to use.
     "NUM_WORKERS": 1,                   # Number of CPU threads used for data loading.
@@ -74,28 +75,24 @@ def init_device(gpu_id: int):
         log_print("CUDA not available, using CPU.")
     return device
 
-def get_data_loaders(train_dir, val_dir, batch_size, image_size, num_workers):
+def get_data_loaders(train_dir, val_dir, test_dir, batch_size, image_size, num_workers):
     """Prepare and return the training and validation data loaders."""
-    train_transform = transforms.Compose([
+    generic_transform = transforms.Compose([
         transforms.Resize(image_size),
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))  # Normalize between [-1, 1]
     ])
 
-    val_transform = transforms.Compose([
-        transforms.Resize(image_size),
-        transforms.ToTensor(),
-        transforms.Normalize((0.5,), (0.5,))  # Normalize between [-1, 1]
-    ])
-
-    train_dataset = datasets.ImageFolder(root=train_dir, transform=train_transform)
-    val_dataset = datasets.ImageFolder(root=val_dir, transform=val_transform)
+    train_dataset = datasets.ImageFolder(root=train_dir, transform=generic_transform)
+    val_dataset = datasets.ImageFolder(root=val_dir, transform=generic_transform)
+    test_dataset = datasets.ImageFolder(root=test_dir, transform=generic_transform)
 
     # pin_memory = Moves data to pinned (non-pageable) memory, making CPU to GPU transfers faster
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
 
-    return train_loader, val_loader
+    return train_loader, val_loader, test_loader
 
 # Training
 def train_one_epoch(model, device, train_loader, optimizer, scaler, criterion, epoch):
@@ -125,7 +122,7 @@ def train_one_epoch(model, device, train_loader, optimizer, scaler, criterion, e
 
         # Occasionally log and print the progress
         # if batch_idx % 40 == 0:
-            # log_print(f"Epoch {epoch + 1}, Batch {batch_idx}, Loss: {loss.item():.4f}")
+        # log_print(f"Epoch {epoch + 1}, Batch {batch_idx}, Loss: {loss.item():.4f}")
 
     # Return the average loss of this epoch
     return total_epoch_loss / len(train_loader)
@@ -247,7 +244,7 @@ def test_model(model, test_loader, device, criterion):
     # Debug accuracy and loss
     accuracy = correct / total * 100
     avg_loss = val_loss / len(test_loader)
-    log_print(f"Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%")
+    log_print(f"Test loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%")
 
     # Generate confusion matrix
     cm = confusion_matrix(all_labels, all_predictions)
@@ -335,7 +332,7 @@ def main():
     # Set properties used in training
     log_print("/* Initializing */")
     device = init_device(CONFIG["GPU_ID"])
-    train_loader, val_loader = get_data_loaders(CONFIG["TRAIN_DIR"], CONFIG["VAL_DIR"], CONFIG["BATCH_SIZE"], CONFIG["IMAGE_SIZE"], CONFIG["NUM_WORKERS"])
+    train_loader, val_loader, test_loader = get_data_loaders(CONFIG["TRAIN_DIR"], CONFIG["VAL_DIR"], CONFIG["TEST_DIR"], CONFIG["BATCH_SIZE"], CONFIG["IMAGE_SIZE"], CONFIG["NUM_WORKERS"])
     model = DiseaseClassifier(CONFIG["NUM_CLASSES"]).to(device)
     optimizer = optim.Adam(model.parameters(), lr=CONFIG["LEARNING_RATE"])
     criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
@@ -346,9 +343,9 @@ def main():
     log_print("/* Training */")
     model = main_training_loop(model, train_loader, val_loader, device, optimizer, criterion, CONFIG["NUM_EPOCHS"], allowed_loss_increases, scheduler)
 
-    # Validate the model
-    log_print("/* Validation */")
-    cm = test_model(model, val_loader, device, criterion)
+    # Test the model
+    log_print("/* Final Testing */")
+    cm = test_model(model, test_loader, device, criterion)
 
     # Save the model
     log_print("/* Saving */")
