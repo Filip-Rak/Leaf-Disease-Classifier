@@ -1,12 +1,11 @@
 import copy
 import os
 import time
-import sys
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torchvision.models as models
+import kornia.augmentation as K
 from matplotlib import pyplot as plt
 from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader
@@ -15,8 +14,8 @@ import seaborn as sns
 
 from efficient_net import CustomEfficientNetB0
 
-# ------------------------------
 # Attributes
+# ------------------------------
 CONFIG = {
     "DATA_DIR": "dataset/",             # Root folder for datasets.
     "TRAIN_DIR": "dataset/train/",      # Training images grouped into subfolders (each for a class).
@@ -34,8 +33,6 @@ CONFIG = {
 # Global variable to store logs
 LOG_OUTPUT = ""
 
-# ------------------------------
-# Functions
 class DiseaseClassifier(nn.Module):
     """EfficientNet-based classifier for plant disease classification."""
 
@@ -54,6 +51,17 @@ class DiseaseClassifier(nn.Module):
     def forward(self, x):
         return self.model(x)
 
+gpu_augmentations = torch.nn.Sequential(
+    K.RandomHorizontalFlip(),
+    K.RandomRotation(45.0),
+    # K.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
+    # K.RandomAffine(degrees=0, translate=(0.2, 0.2)),
+    # K.RandomGaussianBlur((3, 3), (0.1, 2.0))
+).cuda()
+
+# Functions
+# ------------------------------
+# Initialization
 def init_device(gpu_id: int):
     """Initialize and return the device (GPU or CPU)."""
     if torch.cuda.is_available():
@@ -70,11 +78,6 @@ def get_data_loaders(train_dir, val_dir, batch_size, image_size, num_workers):
     """Prepare and return the training and validation data loaders."""
     train_transform = transforms.Compose([
         transforms.Resize(image_size),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(45),
-        # transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3),
-        # transforms.RandomAffine(degrees=0, translate=(0.2, 0.2)),
-        # transforms.GaussianBlur(kernel_size=3),
         transforms.ToTensor(),
         transforms.Normalize((0.5,), (0.5,))  # Normalize between [-1, 1]
     ])
@@ -94,83 +97,118 @@ def get_data_loaders(train_dir, val_dir, batch_size, image_size, num_workers):
 
     return train_loader, val_loader
 
-def train_model(model, train_loader, device, optimizer, criterion, num_epochs, allowed_loss_increases: int, scheduler=None):
-    """Train the model and print progress."""
-    # Switch the model into training mode
-    model.train()
+# Training
+def train_one_epoch(model, device, train_loader, optimizer, scaler, criterion, epoch):
+    total_epoch_loss = 0.0
+    model.train()   # Set the model to training mode
 
-    total_time = 0.0  # Sum total time
-    lowest_loss = sys.float_info.max
+    # Loop through all the batches
+    for batch_idx, (inputs, labels) in enumerate(train_loader):
+        # Move data onto device
+        inputs = inputs.to(device)
+        labels = labels.to(device)
+
+        # Apply GPU augmentations
+        inputs = gpu_augmentations(inputs)
+
+        optimizer.zero_grad()                   # Make sure gradients are zeroed
+
+        with torch.amp.autocast('cuda'):        # Use mixed precision for performance boost
+            outputs = model(inputs)             # Run a prediction
+            loss = criterion(outputs, labels)   # Compute loss
+
+        scaler.scale(loss).backward()           # Scaled backpropagation
+        scaler.step(optimizer)                  # Step optimizer
+        scaler.update()                         # Update scaling factor
+
+        total_epoch_loss += loss.item()         # Add up entire loss of this epoch
+
+        # Occasionally log and print the progress
+        # if batch_idx % 40 == 0:
+            # log_print(f"Epoch {epoch + 1}, Batch {batch_idx}, Loss: {loss.item():.4f}")
+
+    # Return the average loss of this epoch
+    return total_epoch_loss / len(train_loader)
+
+def validate_model(model, val_loader, device, criterion):
+    model.eval()    # Set the model to validation mode
+    total_loss = 0.0
+
+    # Disable gradient calculation for faster validation
+    with torch.no_grad():
+        # Go through all images
+        for inputs, labels in val_loader:
+            # Move data onto device
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+
+            # Forward pass
+            outputs = model(inputs)                 # Make a prediction
+            loss = criterion(outputs, labels)       # Compute loss
+            total_loss += loss.item()               # Convert to numerical
+
+    # Return the average loss of validation
+    return total_loss / len(val_loader)
+
+def main_training_loop(model, train_loader, val_loader, device, optimizer, criterion, num_epochs, allowed_loss_increases, scheduler):
+    """Train and validate the model while printing progress"""
+    total_training_time = 0.0
     loss_increases_in_a_row = 0
-    best_model_state = copy.deepcopy(model.state_dict())  # Store the initial model state
-    scaler = torch.amp.GradScaler('cuda')    # Automatic Mixed Precision Scaler
+    lowest_val_loss = 10e5
+    best_model_state = copy.deepcopy(model.state_dict)
+    scaler = torch.amp.GradScaler('cuda')
 
     # Go through entire dataset num_epochs times
     for epoch in range(num_epochs):
-        start_time = time.time()    # Start the timer and keep track of total loss
-        running_loss = 0.0
+        epoch_start_time = time.time()
 
-        # Go through every training batch
-        for batch_idx, (inputs, labels) in enumerate(train_loader):
-            # Move data onto GPU if enabled
-            inputs, labels = inputs.to(device), labels.to(device)
+        # Train the model
+        training_loss = train_one_epoch(model, device, train_loader, optimizer, scaler, criterion, epoch)
 
-            optimizer.zero_grad()                   # Zero gradient from previous batch
+        # Validate the model
+        validation_loss = validate_model(model, val_loader, device, criterion)
 
-            with torch.amp.autocast('cuda'):        # Enable mixed precision
-                outputs = model(inputs)             # Run a prediction
-                loss = criterion(outputs, labels)   # Compute loss
+        # Analyse the loss
+        scheduler.step(validation_loss)
 
-            scaler.scale(loss).backward()           # Scaled backpropagation
-            scaler.step(optimizer)                  # Step optimizer
-            scaler.update()                         # Update scaling factor
-
-            running_loss += loss.item()             # Add up entire loss of this epoch
-
-            # Print progress every 10 batches
-            if batch_idx % 40 == 0:
-                log_print(f"Epoch {epoch + 1}, Batch {batch_idx}, Loss: {loss.item():.4f}")
-
-        avg_loss = running_loss / len(train_loader)
-
-        # Update the scheduler
-        if scheduler:
-            scheduler.step(avg_loss)
-
-        # If validation loss is worse, count it
-        if avg_loss > lowest_loss:
+        if validation_loss > lowest_val_loss:
             loss_increases_in_a_row += 1
-            log_print(f"NOTICE: Validation loss increased in this epoch ({loss_increases_in_a_row}/{allowed_loss_increases + 1}).")
+            log_print(f"NOTICE: Validation loss is worse than best: {lowest_val_loss:.4f}. In a row: {loss_increases_in_a_row}")
 
             # If the loss increased too many times, revert the model
             if loss_increases_in_a_row > allowed_loss_increases:
                 # Debug average loss and training time
-                epoch_time = time.time() - start_time
-                total_time += epoch_time
-                log_print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}, Time: {epoch_time:.2f}s")
+                epoch_time = time.time() - epoch_start_time
+                total_training_time += epoch_time
+
+                # Log and print data about the loss and time
+                log_print(f"Epoch {epoch + 1}/{num_epochs}, Training loss: {training_loss:.4f}, Validation loss: {validation_loss:.4f}, Time: {epoch_time:.2f}s, LR: {optimizer.param_groups[0]['lr']}")
 
                 # End training
-                log_print(f"NOTICE: Reverting to previous best model state (loss: {lowest_loss:.4f}). Ending training")
-                model.load_state_dict(best_model_state)  # Restore best model
+                log_print(f"NOTICE: Reverting to previous best model state (loss: {lowest_val_loss:.4f}). Ending training")
                 break
         else:
-            lowest_loss = avg_loss
+            lowest_val_loss = validation_loss
             loss_increases_in_a_row = 0  # Reset counter if loss improves
             best_model_state = copy.deepcopy(model.state_dict())  # Save the best model
 
-        # Debug average loss and training time
-        epoch_time = time.time() - start_time
-        total_time += epoch_time
-        log_print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}, Time: {epoch_time:.2f}s")
+        epoch_time = time.time() - epoch_start_time
+        total_training_time += epoch_time
+
+        # Log and print data about the loss and time
+        log_print(f"Epoch {epoch + 1}/{num_epochs}, Training loss: {training_loss:.4f}, Validation loss: {validation_loss:.4f}, Time: {epoch_time:.2f}s, LR: {optimizer.param_groups[0]['lr']}")
 
     # Print total time spent in training
-    log_print(f"Total time spent in training: {total_time:.2f}s")
+    log_print(f"Total time spent in training: {total_training_time:.2f}s")
 
     # Return the best model
+    log_print(f"Loading the best model with validation loss: {lowest_val_loss:.4f}")
+    model.load_state_dict(best_model_state)
     return model
 
-def validate_model(model, val_loader, device, criterion):
-    """Evaluate the model on the validation dataset."""
+# Testing
+def test_model(model, test_loader, device, criterion):
+    """Evaluate the model on the test dataset."""
     # Set model to validation mode
     model.eval()
 
@@ -186,7 +224,7 @@ def validate_model(model, val_loader, device, criterion):
     # Disable gradient calculation (faster validation)
     with torch.no_grad():
         # Go through batches of images
-        for inputs, labels in val_loader:
+        for inputs, labels in test_loader:
             # Move data to selected device
             inputs, labels = inputs.to(device), labels.to(device)
 
@@ -208,13 +246,14 @@ def validate_model(model, val_loader, device, criterion):
 
     # Debug accuracy and loss
     accuracy = correct / total * 100
-    avg_loss = val_loss / len(val_loader)
+    avg_loss = val_loss / len(test_loader)
     log_print(f"Validation Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%")
 
     # Generate confusion matrix
     cm = confusion_matrix(all_labels, all_predictions)
     return cm
 
+# Miscellaneous
 def save_output(model, cm, save_path, val_loader):
     """Save the trained model, confusion matrix, and logs to the same directory."""
     os.makedirs(save_path, exist_ok=True)
@@ -285,10 +324,10 @@ def log_input(prompt):
     LOG_OUTPUT += log_entry + "\n"          # Log input
     return user_response                    # Return input as normal
 
-# ------------------------------
 # Main Function
+# ------------------------------
 def main():
-    """Main training loop."""
+    """Main execution function."""
     # Query user on the process
     log_print("/* Querying */")
     save_path = get_output_dir_name(CONFIG["OUTPUT_DIR"])
@@ -305,17 +344,17 @@ def main():
 
     # Train the model
     log_print("/* Training */")
-    model = train_model(model, train_loader, device, optimizer, criterion, CONFIG["NUM_EPOCHS"], allowed_loss_increases, scheduler)
+    model = main_training_loop(model, train_loader, val_loader, device, optimizer, criterion, CONFIG["NUM_EPOCHS"], allowed_loss_increases, scheduler)
 
     # Validate the model
     log_print("/* Validation */")
-    cm = validate_model(model, val_loader, device, criterion)
+    cm = test_model(model, val_loader, device, criterion)
 
     # Save the model
     log_print("/* Saving */")
     save_output(model, cm, save_path, val_loader)
 
-# ------------------------------
 # Entry Point
+# ------------------------------
 if __name__ == "__main__":
     main()
