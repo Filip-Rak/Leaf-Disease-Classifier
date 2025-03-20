@@ -1,0 +1,61 @@
+/* Querying */
+Enter output directory name: EffNetB0_10ep-BS64_LR1e-3V-LS-EA
+/* Initializing */
+Using device: cuda:0 (NVIDIA GeForce RTX 3050 Ti Laptop GPU)
+/* Training */
+Epoch 1, Batch 0, Loss: 1.9939
+Epoch 1, Batch 10, Loss: 0.8691
+Epoch 1, Batch 20, Loss: 0.9573
+Epoch 1, Batch 30, Loss: 0.7943
+Epoch 1/10, Loss: 1.0054, Time: 139.02s
+Epoch 2, Batch 0, Loss: 0.7326
+Epoch 2, Batch 10, Loss: 0.6865
+Epoch 2, Batch 20, Loss: 0.6153
+Epoch 2, Batch 30, Loss: 0.6469
+Epoch 2/10, Loss: 0.6676, Time: 150.45s
+Epoch 3, Batch 0, Loss: 0.5623
+Epoch 3, Batch 10, Loss: 0.5944
+Epoch 3, Batch 20, Loss: 0.6212
+Epoch 3, Batch 30, Loss: 0.6364
+Epoch 3/10, Loss: 0.6178, Time: 132.63s
+Epoch 4, Batch 0, Loss: 0.6570
+Epoch 4, Batch 10, Loss: 0.5906
+Epoch 4, Batch 20, Loss: 0.5732
+Epoch 4, Batch 30, Loss: 0.5170
+Epoch 4/10, Loss: 0.5540, Time: 136.71s
+Epoch 5, Batch 0, Loss: 0.5021
+Epoch 5, Batch 10, Loss: 0.5302
+Epoch 5, Batch 20, Loss: 0.5056
+Epoch 5, Batch 30, Loss: 0.4837
+Epoch 5/10, Loss: 0.5351, Time: 133.65s
+Epoch 6, Batch 0, Loss: 0.5382
+Epoch 6, Batch 10, Loss: 0.5480
+Epoch 6, Batch 20, Loss: 0.5942
+Epoch 6, Batch 30, Loss: 0.4991
+Epoch 6/10, Loss: 0.5326, Time: 142.17s
+Epoch 7, Batch 0, Loss: 0.5447
+Epoch 7, Batch 10, Loss: 0.4870
+Epoch 7, Batch 20, Loss: 0.5156
+Epoch 7, Batch 30, Loss: 0.6410
+Epoch 7/10, Loss: 0.5194, Time: 144.43s
+Epoch 8, Batch 0, Loss: 0.4650
+Epoch 8, Batch 10, Loss: 0.4713
+Epoch 8, Batch 20, Loss: 0.5188
+Epoch 8, Batch 30, Loss: 0.5688
+Epoch 8/10, Loss: 0.5146, Time: 175.40s
+Epoch 9, Batch 0, Loss: 0.4758
+Epoch 9, Batch 10, Loss: 0.5091
+Epoch 9, Batch 20, Loss: 0.5022
+Epoch 9, Batch 30, Loss: 0.4887
+Epoch 9/10, Loss: 0.5080, Time: 144.56s
+Epoch 10, Batch 0, Loss: 0.5464
+Epoch 10, Batch 10, Loss: 0.5282
+Epoch 10, Batch 20, Loss: 0.5719
+Epoch 10, Batch 30, Loss: 0.4898
+Epoch 10/10, Loss: 0.5025, Time: 144.72s
+Total time spent in training: 1443.73s
+/* Validation */
+Validation Loss: 0.5723, Accuracy: 95.24%
+/* Saving */
+Model saved to output/EffNetB0_10ep-BS64_LR1e-3V-LS-EA\model-EffNetB0_10ep-BS64_LR1e-3V-LS-EA.pth
+Confusion matrix saved to output/EffNetB0_10ep-BS64_LR1e-3V-LS-EA\cm-EffNetB0_10ep-BS64_LR1e-3V-LS-EA.png
