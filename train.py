@@ -34,7 +34,7 @@ CONFIG = {
     "SCHEDULER_PATIENCE": 2,            # Number of epochs with no improvement before the learning rate is reduced.
     "DROPOUT_FACTOR": 0.3,              # The percentage of neurons randomly disabled during training to prevent overfitting.
     "GPU_ID": 0,                        # Specifies which CUDA GPU to use.
-    "NUM_WORKERS": 1,                   # Number of CPU threads used for data loading.
+    "NUM_WORKERS": 0,                   # Number of CPU threads used for data loading.
 }
 
 # Global variable to store logs
